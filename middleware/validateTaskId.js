@@ -1,21 +1,22 @@
+const mongoose = require("mongoose");
+
 /**
- * Middleware to validate task IDs before controller logic.
- * Ensures the :id parameter is a strictly positive integer.
- * Fulfills Practical 4 Post-Lab Requirement.
+ * Middleware to validate MongoDB ObjectId format before database operations.
+ * Practical 5: CHARUSAT ITUE301 - Ansh Sojitra (24CS095)
+ *
+ * Ensures the :id route parameter is a valid 24-character hexadecimal MongoDB ObjectId.
+ * Prevents Mongoose CastError exceptions and returns structured 400 Bad Request.
  */
 const validateTaskId = (req, res, next) => {
   const { id } = req.params;
 
-  // Check if ID is a valid positive integer string
-  if (!/^\d+$/.test(id) || parseInt(id, 10) <= 0) {
+  if (!mongoose.Types.ObjectId.isValid(id)) {
     return res.status(400).json({
       success: false,
-      message: `Invalid task ID '${id}'. Task ID must be a positive integer.`,
+      message: `Invalid task ID format '${id}'. Task ID must be a valid 24-character hexadecimal MongoDB ObjectId.`,
     });
   }
 
-  // Pre-parse and attach to request object
-  req.taskId = parseInt(id, 10);
   next();
 };
 

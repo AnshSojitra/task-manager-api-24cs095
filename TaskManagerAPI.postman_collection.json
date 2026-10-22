@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "c7a6e191-4c28-4e89-9a25-e51c8901b0f1",
-    "name": "TaskManager API - Practical 4 (24CS095)",
-    "description": "Complete Postman collection for Practical 4: Task Manager REST API with Node.js & Express. Student: Ansh Sojitra (24CS095) - CHARUSAT ITUE301.",
+    "name": "TaskManager API - Practical 5 (24CS095)",
+    "description": "Complete Postman collection for Practical 5: MongoDB Integration and Schema Design with Mongoose. Student: Ansh Sojitra (24CS095) - CHARUSAT ITUE301.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -10,11 +10,16 @@
       "key": "baseUrl",
       "value": "http://localhost:5000",
       "type": "string"
+    },
+    {
+      "key": "taskId",
+      "value": "6ad9dd4f41481c2b0161d585",
+      "type": "string"
     }
   ],
   "item": [
     {
-      "name": "Get API Info",
+      "name": "01. Get API Info & Database Status",
       "request": {
         "method": "GET",
         "header": [],
@@ -23,12 +28,12 @@
           "host": ["{{baseUrl}}"],
           "path": ["api"]
         },
-        "description": "Returns API metadata, student details, and route list."
+        "description": "Returns API metadata, student details (Ansh Sojitra 24CS095), and MongoDB connection status."
       },
       "response": []
     },
     {
-      "name": "Get All Tasks",
+      "name": "02. Get All Tasks from MongoDB",
       "request": {
         "method": "GET",
         "header": [],
@@ -37,26 +42,12 @@
           "host": ["{{baseUrl}}"],
           "path": ["tasks"]
         },
-        "description": "Retrieve all tasks stored in memory."
+        "description": "Retrieve all task documents stored in MongoDB (ordered newest first)."
       },
       "response": []
     },
     {
-      "name": "Get Single Task by ID",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/tasks/1",
-          "host": ["{{baseUrl}}"],
-          "path": ["tasks", "1"]
-        },
-        "description": "Fetch a specific task by its numeric ID."
-      },
-      "response": []
-    },
-    {
-      "name": "Create Task (Valid)",
+      "name": "03. Create Task (Valid with Priority & Whitespace Trim)",
       "request": {
         "method": "POST",
         "header": [
@@ -67,7 +58,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"title\": \"Implement Unit Tests\",\n  \"description\": \"Write comprehensive endpoint test cases using Node fetch\",\n  \"completed\": false\n}",
+          "raw": "{\n  \"title\": \"   Implement Mongoose Models and Hooks   \",\n  \"description\": \"Define Task schema with title, priority enum, completed, and pre-save hook\",\n  \"completed\": false,\n  \"priority\": \"high\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -79,12 +70,26 @@
           "host": ["{{baseUrl}}"],
           "path": ["tasks"]
         },
-        "description": "Create a new task with title, description, and completed flag."
+        "description": "Create a new task in MongoDB. Demonstrates whitespace trimming on title and priority enum."
       },
       "response": []
     },
     {
-      "name": "Update Task (Valid)",
+      "name": "04. Get Task by Valid ObjectId",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/tasks/{{taskId}}",
+          "host": ["{{baseUrl}}"],
+          "path": ["tasks", "{{taskId}}"]
+        },
+        "description": "Fetch a specific task document by its 24-character hexadecimal MongoDB ObjectId."
+      },
+      "response": []
+    },
+    {
+      "name": "05. Update Task by ObjectId",
       "request": {
         "method": "PUT",
         "header": [
@@ -95,7 +100,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"title\": \"Implement Unit Tests (Updated)\",\n  \"description\": \"All tests passing successfully with 100% coverage\",\n  \"completed\": true\n}",
+          "raw": "{\n  \"title\": \"Implement Mongoose Models and Hooks (Completed)\",\n  \"completed\": true,\n  \"priority\": \"medium\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -103,30 +108,30 @@
           }
         },
         "url": {
-          "raw": "{{baseUrl}}/tasks/1",
+          "raw": "{{baseUrl}}/tasks/{{taskId}}",
           "host": ["{{baseUrl}}"],
-          "path": ["tasks", "1"]
+          "path": ["tasks", "{{taskId}}"]
         },
-        "description": "Update an existing task's title, description, or completed status."
+        "description": "Update an existing task in MongoDB with Mongoose validator enforcement."
       },
       "response": []
     },
     {
-      "name": "Delete Task (Valid)",
+      "name": "06. Delete Task by ObjectId",
       "request": {
         "method": "DELETE",
         "header": [],
         "url": {
-          "raw": "{{baseUrl}}/tasks/1",
+          "raw": "{{baseUrl}}/tasks/{{taskId}}",
           "host": ["{{baseUrl}}"],
-          "path": ["tasks", "1"]
+          "path": ["tasks", "{{taskId}}"]
         },
-        "description": "Delete a task by numeric ID."
+        "description": "Delete a task document from MongoDB by its ObjectId."
       },
       "response": []
     },
     {
-      "name": "Error - Missing Title on POST",
+      "name": "07. Error - Missing Title (Validation Error)",
       "request": {
         "method": "POST",
         "header": [
@@ -137,7 +142,7 @@
         ],
         "body": {
           "mode": "raw",
-          "raw": "{\n  \"description\": \"Task without title\"\n}",
+          "raw": "{\n  \"description\": \"Missing title payload\",\n  \"priority\": \"low\"\n}",
           "options": {
             "raw": {
               "language": "json"
@@ -149,12 +154,68 @@
           "host": ["{{baseUrl}}"],
           "path": ["tasks"]
         },
-        "description": "Expected 400 Bad Request when title is omitted."
+        "description": "Expected 400 Bad Request with formatted JSON validation error when title is missing."
       },
       "response": []
     },
     {
-      "name": "Error - Missing Content-Type Header (Post-Lab)",
+      "name": "08. Error - Invalid Priority Enum",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"title\": \"Task with invalid priority\",\n  \"priority\": \"critical\"\n}",
+          "options": {
+            "raw": {
+              "language": "json"
+            }
+          }
+        },
+        "url": {
+          "raw": "{{baseUrl}}/tasks",
+          "host": ["{{baseUrl}}"],
+          "path": ["tasks"]
+        },
+        "description": "Expected 400 Bad Request when priority is not one of 'low', 'medium', or 'high'."
+      },
+      "response": []
+    },
+    {
+      "name": "09. Error - Malformed MongoDB ObjectId",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/tasks/malformed-id-123",
+          "host": ["{{baseUrl}}"],
+          "path": ["tasks", "malformed-id-123"]
+        },
+        "description": "Expected 400 Bad Request when ID is not a valid 24-character hexadecimal ObjectId."
+      },
+      "response": []
+    },
+    {
+      "name": "10. Error - Nonexistent Valid ObjectId",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/tasks/507f1f77bcf86cd799439011",
+          "host": ["{{baseUrl}}"],
+          "path": ["tasks", "507f1f77bcf86cd799439011"]
+        },
+        "description": "Expected structured 404 Not Found when a valid ObjectId is not present in the database."
+      },
+      "response": []
+    },
+    {
+      "name": "11. Error - Missing Content-Type Header",
       "request": {
         "method": "POST",
         "header": [],
@@ -167,49 +228,7 @@
           "host": ["{{baseUrl}}"],
           "path": ["tasks"]
         },
-        "description": "Expected 400 Bad Request when Content-Type: application/json is not provided."
-      },
-      "response": []
-    },
-    {
-      "name": "Error - Invalid Task ID Format (Post-Lab)",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/tasks/abc",
-          "host": ["{{baseUrl}}"],
-          "path": ["tasks", "abc"]
-        },
-        "description": "Expected 400 Bad Request when task ID is not a positive integer."
-      },
-      "response": []
-    },
-    {
-      "name": "Error - Nonexistent Task ID",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/tasks/999",
-          "host": ["{{baseUrl}}"],
-          "path": ["tasks", "999"]
-        },
-        "description": "Expected 404 Not Found when task ID does not exist in memory."
-      },
-      "response": []
-    },
-    {
-      "name": "Error - Unknown Route (404)",
-      "request": {
-        "method": "GET",
-        "header": [],
-        "url": {
-          "raw": "{{baseUrl}}/nonexistent-endpoint",
-          "host": ["{{baseUrl}}"],
-          "path": ["nonexistent-endpoint"]
-        },
-        "description": "Expected structured 404 response for unmatched route."
+        "description": "Expected 400 Bad Request when Content-Type: application/json is not provided on POST."
       },
       "response": []
     }

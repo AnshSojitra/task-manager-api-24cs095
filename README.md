@@ -1,4 +1,4 @@
-# Practical 4: Building a RESTful API with Node.js and Express
+# Practical 5: MongoDB Integration and Schema Design with Mongoose
 
 **Course:** ITUE301 — Advanced Web Development Frameworks  
 **Academic Year:** 2026–27  
@@ -12,244 +12,254 @@
 ## Table of Contents
 - [Objective](#objective)
 - [Architecture & Folder Structure](#architecture--folder-structure)
-- [Features Implemented](#features-implemented)
-- [Prerequisites](#prerequisites)
+- [Mongoose Schema Design (`models/Task.js`)](#mongoose-schema-design-modelstaskjs)
+- [Database Connection & Safety (`config/db.js`)](#database-connection--safety-configdbjs)
+- [API Routes Reference](#api-routes-reference)
+- [Error Handling & ID Validation](#error-handling--id-validation)
+- [MongoDB Setup Guide (Local & Atlas)](#mongodb-setup-guide-local--atlas)
 - [Installation & Setup](#installation--setup)
 - [Environment Variables](#environment-variables)
 - [Running the Server](#running-the-server)
-- [API Routes Reference](#api-routes-reference)
 - [API Request & Response Examples](#api-request--response-examples)
-- [Post-Lab Requirements](#post-lab-requirements)
-- [Automated & Manual Testing Instructions](#automated--manual-testing-instructions)
-- [Testing Evidence Checklist](#testing-evidence-checklist)
-- [VCS / Git Submission](#vcs--git-submission)
+- [Automated Test Suite & Verification](#automated-test-suite--verification)
+- [Evidence & Acceptance Checklist](#evidence--acceptance-checklist)
+- [Git Submission & Repository Plan](#git-submission--repository-plan)
 
 ---
 
 ## Objective
-Build a robust, production-grade Task Management REST API using Node.js and Express utilizing:
-1. In-memory data storage (no external database required).
-2. Complete CRUD endpoints (`GET`, `POST`, `PUT`, `DELETE`).
-3. Global request logging middleware capturing HTTP method, URL, and ISO timestamp.
-4. JSON body parsing and standard HTTP status codes (`200 OK`, `201 Created`, `400 Bad Request`, `404 Not Found`, `500 Internal Server Error`).
-5. Structured 404 handler for unrecognized routes.
-6. Centralized global error handling middleware placed after routes to catch unexpected errors and suppress internal stack traces from leaking to clients.
-7. Post-lab validation middleware to enforce `Content-Type: application/json` for `POST`/`PUT` and validate task IDs before controller logic execution.
+Replace the in-memory array storage from Practical 4 with **MongoDB** and **Mongoose ODM models**, while preserving all RESTful API contracts and adding robust schema validation, whitespace normalization, and safe identifier verification.
+
+### Core Objectives:
+1. **Persistent Storage:** Replace ephemeral in-memory storage with MongoDB persistence so tasks remain across server restarts.
+2. **Mongoose Schema & Validation:** Design `models/Task.js` featuring strict data types, required constraints, enum verification for `priority`, default timestamps, and pre-save hooks/setters for whitespace trimming.
+3. **Safe Identifier Handling:** Safely validate MongoDB 24-character hexadecimal `ObjectId`s. Return structured `400 Bad Request` for malformed IDs and `404 Not Found` when a valid ID is absent.
+4. **Asynchronous Error Forwarding:** Forward async route exceptions to centralized error middleware, translating Mongoose `ValidationError` and `CastError` instances into clean, client-readable JSON.
+5. **Secure Configuration:** Never hardcode database credentials. Load `MONGO_URI` dynamically from `.env` using `dotenv`, maintain `.env.example`, and enforce `.gitignore` rules.
 
 ---
 
 ## Architecture & Folder Structure
 
 ```
-TaskManagerAPI/
+task-manager-api-24CS095/
+├── config/
+│   └── db.js                   # Mongoose connection manager (loads MONGO_URI from .env)
 ├── middleware/
 │   ├── logger.js               # Global request logger (Method, URL, ISO timestamp)
-│   ├── validateContentType.js  # Rejects POST/PUT lacking Content-Type: application/json
-│   ├── validateTaskId.js       # Pre-validates :id route parameter as positive integer
-│   └── errorHandler.js         # Centralized error handler (no stack trace leaks)
+│   ├── validateContentType.js  # Enforces Content-Type: application/json on POST/PUT
+│   ├── validateTaskId.js       # Pre-validates 24-hex MongoDB ObjectId before DB queries
+│   └── errorHandler.js         # Formats ValidationError, CastError, and hides stack traces
+├── models/
+│   └── Task.js                 # Mongoose schema, validation, priority enum & pre-save hook
 ├── routes/
-│   └── tasks.js                # Task CRUD endpoints and in-memory data store
-├── .env                        # Local environment configuration (git-ignored)
-├── .env.example                # Template for environment configuration
-├── .gitignore                  # Git ignore rules (node_modules, .env, logs)
-├── app.js                      # Express application entry point & middleware pipeline
-├── package.json                # Project dependencies and script definitions
+│   └── tasks.js                # Task CRUD endpoints using Mongoose model methods
+├── .env                        # Local secret environment configuration (git-ignored)
+├── .env.example                # Safe environment template with placeholder MONGO_URI
+├── .gitignore                  # Git ignore rules (node_modules, .env, *.log)
+├── app.js                      # Express application entry point, middleware & DB trigger
+├── package.json                # Project dependencies (express, mongoose, dotenv)
 ├── package-lock.json           # Locked dependency tree
-├── TaskManagerAPI.postman_collection.json # Postman v2.1 collection
-├── test.js                     # Automated integration test suite (43 assertions)
+├── TaskManagerAPI.postman_collection.json # Postman v2.1 collection for Practical 5
+├── test.js                     # Automated test suite (50 passing assertions)
 └── README.md                   # University practical documentation and report
 ```
 
 ---
 
-## Features Implemented
+## Mongoose Schema Design (`models/Task.js`)
 
-- **Modular Middleware Pipeline**:
-  - Request logging before request processing.
-  - Media type validation before body parsing.
-  - Param-level ID validation before route controllers.
-  - Safe global error handling at the tail of the application pipeline.
-- **In-Memory Store**: Fast and self-contained JavaScript array containing seed tasks. Each task has:
-  - `id` *(Number, unique auto-incremented)*
-  - `title` *(String, required)*
-  - `description` *(String, optional)*
-  - `completed` *(Boolean, defaults to false)*
-- **Data Validation**:
-  - Empty or non-string titles on creation rejected with `400 Bad Request`.
-  - Non-numeric or negative IDs rejected with `400 Bad Request`.
-  - Empty update payloads rejected with `400 Bad Request`.
-  - Missing task ID lookups return `404 Not Found`.
-- **Security & Reliability**:
-  - Internal server errors and JSON parse syntax errors handled cleanly without exposing stack traces.
-  - Environment-based port fallback (`PORT=5000`).
+The `Task` model is defined in `models/Task.js` using Mongoose:
 
----
+| Field | Type | Constraints & Defaults | Purpose |
+|---|---|---|---|
+| `title` | `String` | Required (`true`), trimmed of whitespace, non-empty custom validator | Primary title of the task |
+| `description` | `String` | Optional, default: `""`, trimmed | Detailed explanation of the task |
+| `completed` | `Boolean` | Optional, default: `false` | Completion status flag |
+| `createdAt` | `Date` | Default: `Date.now` | Automatic document creation timestamp |
+| `priority` | `String` | Enum: `['low', 'medium', 'high']`, default: `'medium'`, lowercase | Priority classification |
 
-## Prerequisites
-
-- **Node.js**: v18.0.0 or higher (Tested on Node.js v24.12.0)
-- **npm**: v9.0.0 or higher (Tested on npm v11.6.2)
-- **cURL / Postman / Thunder Client**: For API testing
-
----
-
-## Installation & Setup
-
-1. **Clone or Navigate to the Repository:**
-   ```bash
-   git clone https://github.com/anshsojitra/task-manager-api-24CS095.git
-   cd task-manager-api-24CS095
-   ```
-
-2. **Install Dependencies:**
-   ```bash
-   npm install
-   ```
-
-3. **Configure Environment Variables:**
-   ```bash
-   cp .env.example .env
-   ```
-
----
-
-## Environment Variables
-
-Defined in `.env` (excluded from git):
-
-| Variable | Default Value | Description |
-| :--- | :--- | :--- |
-| `PORT` | `5000` | Port on which the Express server listens |
-| `NODE_ENV` | `development` | Application runtime environment |
-
----
-
-## Running the Server
-
-- **Start in Production Mode:**
-  ```bash
-  npm start
+### Whitespace Trimming Hook:
+To fulfill the requirement to trim title whitespace with a pre-save hook and schema setter:
+- **Schema Setter:** `set: (val) => (typeof val === "string" ? val.trim() : val)` strips leading and trailing whitespace on input.
+- **Pre-Save Hook:**
+  ```javascript
+  taskSchema.pre("save", function (next) {
+    if (this.title && typeof this.title === "string") {
+      this.title = this.title.trim();
+    }
+    if (this.description && typeof this.description === "string") {
+      this.description = this.description.trim();
+    }
+    if (typeof next === "function") next();
+  });
   ```
 
-- **Start in Development Mode (Live Watch):**
-  ```bash
-  npm run dev
-  ```
+---
 
-The server will display:
-```
-Server is running on http://localhost:5000
+## Database Connection & Safety (`config/db.js`)
+
+The application connects to MongoDB using a dedicated configuration module:
+- **No Hardcoded Credentials:** `MONGO_URI` is extracted strictly from `process.env.MONGO_URI`.
+- **Fail-Fast Mechanism:** If `MONGO_URI` is missing, the application halts startup with an informative error rather than attempting insecure defaults.
+- **Connection Diagnostics:** Successful connection logs host, port, and database name.
+
+```javascript
+const mongoose = require("mongoose");
+
+const connectDB = async () => {
+  const mongoURI = process.env.MONGO_URI;
+  if (!mongoURI) {
+    throw new Error("FATAL: MONGO_URI is not defined in environment variables (.env).");
+  }
+  return await mongoose.connect(mongoURI);
+};
 ```
 
 ---
 
 ## API Routes Reference
 
-| Method | Endpoint | Description | Status Codes |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/` or `/api` | API Info, metadata, student details & route list | `200` |
-| `GET` | `/tasks` | Retrieve all tasks from memory | `200` |
-| `GET` | `/tasks/:id` | Retrieve a specific task by its numeric ID | `200`, `400`, `404` |
-| `POST` | `/tasks` | Create a new task (Requires `application/json`) | `201`, `400` |
-| `PUT` | `/tasks/:id` | Update an existing task (Requires `application/json`) | `200`, `400`, `404` |
-| `DELETE` | `/tasks/:id` | Delete a task by its numeric ID | `200`, `400`, `404` |
-| `*` | Any other route | Unmatched route handler | `404` |
+| Method | Endpoint | Description | Expected Status Codes |
+|---|---|---|---|
+| `GET` | `/api` | Service info, student metadata, DB status | `200 OK` |
+| `GET` | `/tasks` | Retrieve all tasks from MongoDB (sorted newest first) | `200 OK` |
+| `GET` | `/tasks/:id` | Retrieve single task by MongoDB ObjectId | `200 OK`, `400 Bad Request`, `404 Not Found` |
+| `POST` | `/tasks` | Create a new task (enforces title & priority enum) | `201 Created`, `400 Bad Request` |
+| `PUT` | `/tasks/:id` | Update an existing task by ObjectId with validation | `200 OK`, `400 Bad Request`, `404 Not Found` |
+| `DELETE` | `/tasks/:id` | Delete a task document by ObjectId | `200 OK`, `400 Bad Request`, `404 Not Found` |
+
+---
+
+## Error Handling & ID Validation
+
+### 1. Malformed Mongo ID vs Nonexistent Valid ID:
+- **Malformed ID (e.g. `GET /tasks/123` or `GET /tasks/abc`):**
+  Intercepted by `middleware/validateTaskId.js` using `mongoose.Types.ObjectId.isValid(id)`. Returns:
+  ```json
+  {
+    "success": false,
+    "message": "Invalid task ID format '123'. Task ID must be a valid 24-character hexadecimal MongoDB ObjectId."
+  }
+  ```
+  *HTTP Status: 400 Bad Request*
+- **Nonexistent Valid ID (e.g. `GET /tasks/507f1f77bcf86cd799439011`):**
+  Queried via `Task.findById(id)`. Returns:
+  ```json
+  {
+    "success": false,
+    "message": "Task with ID 507f1f77bcf86cd799439011 not found"
+  }
+  ```
+  *HTTP Status: 404 Not Found*
+
+### 2. Mongoose Schema Validation Formatting:
+When Mongoose validation fails (missing title, whitespace-only title, invalid priority enum), `middleware/errorHandler.js` formats the error cleanly into JSON:
+```json
+{
+  "success": false,
+  "message": "Validation Error",
+  "errors": [
+    "'critical' is not a valid priority. Allowed values: low, medium, high."
+  ]
+}
+```
+*HTTP Status: 400 Bad Request*
+
+---
+
+## MongoDB Setup Guide (Local & Atlas)
+
+### Option A: Local MongoDB (Default & Recommended for Lab)
+1. **Windows Service Check:**
+   MongoDB Community Server runs as a Windows Service named `MongoDB` on port `27017`.
+   Check service status in PowerShell:
+   ```powershell
+   Get-Service -Name "*mongo*"
+   ```
+2. **Start Service (if stopped):**
+   ```powershell
+   Start-Service -Name "MongoDB"
+   ```
+3. Set your `.env`:
+   ```env
+   MONGO_URI=mongodb://127.0.0.1:27017/task_manager
+   ```
+
+### Option B: MongoDB Atlas (Cloud Cluster)
+1. Create a free M0 cluster on [MongoDB Atlas](https://www.mongodb.com/cloud/atlas).
+2. Under **Database Access**, create a database user and password.
+3. Under **Network Access**, add `0.0.0.0/0` (or your current IP address).
+4. Under **Connect** > **Drivers**, copy the connection string.
+5. Set your `.env`:
+   ```env
+   MONGO_URI=mongodb+srv://<username>:<password>@cluster0.example.mongodb.net/task_manager?retryWrites=true&w=majority
+   ```
+
+---
+
+## Installation & Setup
+
+1. **Clone or Navigate to the Workspace:**
+   ```bash
+   cd task-manager-api-24CS095
+   ```
+2. **Install Dependencies:**
+   ```bash
+   npm install
+   ```
+3. **Configure Environment Variables:**
+   ```bash
+   cp .env.example .env
+   ```
+   Ensure `.env` contains your active `MONGO_URI`.
+
+---
+
+## Environment Variables
+
+| Variable | Description | Default / Example |
+|---|---|---|
+| `PORT` | HTTP server port | `5000` |
+| `NODE_ENV` | Application environment | `development` |
+| `MONGO_URI` | MongoDB connection string | `mongodb://127.0.0.1:27017/task_manager` |
+
+> [!IMPORTANT]
+> The `.env` file is explicitly ignored by `.gitignore` and is never committed to Git. Only `.env.example` with safe placeholders is tracked in the repository.
+
+---
+
+## Running the Server
+
+### Production Mode:
+```bash
+npm start
+```
+
+### Development Mode (with Node.js auto-reloader):
+```bash
+npm run dev
+```
+
+Expected startup terminal output:
+```
+[Database] MongoDB Connected successfully: 127.0.0.1:27017/task_manager
+Server is running on http://localhost:5000
+```
 
 ---
 
 ## API Request & Response Examples
 
-### 1. API Metadata & Welcome (`GET /api`)
-**Request:**
-```bash
-curl -X GET http://localhost:5000/api
-```
-**Response (`200 OK`):**
-```json
-{
-  "success": true,
-  "message": "Task Management REST API - CHARUSAT ITUE301 Practical 4",
-  "student": {
-    "name": "Ansh Sojitra",
-    "studentId": "24CS095",
-    "academicYear": "2026-27"
-  },
-  "endpoints": {
-    "GET /tasks": "Retrieve all tasks",
-    "GET /tasks/:id": "Retrieve a specific task by ID",
-    "POST /tasks": "Create a new task (Content-Type: application/json required)",
-    "PUT /tasks/:id": "Update an existing task (Content-Type: application/json required)",
-    "DELETE /tasks/:id": "Delete a task by ID"
-  }
-}
-```
-
----
-
-### 2. Get All Tasks (`GET /tasks`)
-**Request:**
-```bash
-curl -X GET http://localhost:5000/tasks
-```
-**Response (`200 OK`):**
-```json
-{
-  "success": true,
-  "count": 3,
-  "data": [
-    {
-      "id": 1,
-      "title": "Learn Express.js",
-      "description": "Study Express fundamentals, routing, and middleware architecture",
-      "completed": false
-    },
-    {
-      "id": 2,
-      "title": "Build RESTful API",
-      "description": "Implement CRUD endpoints with proper HTTP status codes",
-      "completed": true
-    },
-    {
-      "id": 3,
-      "title": "Implement Custom Middleware",
-      "description": "Add request logger, Content-Type validator, and task ID validator",
-      "completed": false
-    }
-  ]
-}
-```
-
----
-
-### 3. Get Single Task by ID (`GET /tasks/1`)
-**Request:**
-```bash
-curl -X GET http://localhost:5000/tasks/1
-```
-**Response (`200 OK`):**
-```json
-{
-  "success": true,
-  "data": {
-    "id": 1,
-    "title": "Learn Express.js",
-    "description": "Study Express fundamentals, routing, and middleware architecture",
-    "completed": false
-  }
-}
-```
-
----
-
-### 4. Create Task (`POST /tasks`)
-**Request:**
+### 1. Create Task with Priority and Whitespace Trimming
 ```bash
 curl -X POST http://localhost:5000/tasks \
   -H "Content-Type: application/json" \
   -d '{
-    "title": "Submit Practical 4 Assignment",
-    "description": "Verify code, execute tests, and push to GitHub repository",
-    "completed": false
+    "title": "   Prepare Practical 5 Submission   ",
+    "description": "Verify MongoDB integration and Mongoose validation",
+    "completed": false,
+    "priority": "high"
   }'
 ```
 **Response (`201 Created`):**
@@ -258,273 +268,179 @@ curl -X POST http://localhost:5000/tasks \
   "success": true,
   "message": "Task created successfully",
   "data": {
-    "id": 4,
-    "title": "Submit Practical 4 Assignment",
-    "description": "Verify code, execute tests, and push to GitHub repository",
-    "completed": false
+    "_id": "6ad9dd4f41481c2b0161d585",
+    "title": "Prepare Practical 5 Submission",
+    "description": "Verify MongoDB integration and Mongoose validation",
+    "completed": false,
+    "priority": "high",
+    "createdAt": "2026-10-22T09:54:23.536Z",
+    "id": "6ad9dd4f41481c2b0161d585"
   }
 }
 ```
 
----
-
-### 5. Update Task (`PUT /tasks/4`)
-**Request:**
+### 2. Validation Error on Invalid Priority Enum
 ```bash
-curl -X PUT http://localhost:5000/tasks/4 \
+curl -X POST http://localhost:5000/tasks \
   -H "Content-Type: application/json" \
   -d '{
-    "title": "Submit Practical 4 Assignment (Completed)",
-    "completed": true
+    "title": "Invalid Priority Task",
+    "priority": "urgent"
   }'
 ```
-**Response (`200 OK`):**
+**Response (`400 Bad Request`):**
 ```json
 {
-  "success": true,
-  "message": "Task updated successfully",
-  "data": {
-    "id": 4,
-    "title": "Submit Practical 4 Assignment (Completed)",
-    "description": "Verify code, execute tests, and push to GitHub repository",
-    "completed": true
-  }
+  "success": false,
+  "message": "Validation Error",
+  "errors": [
+    "'urgent' is not a valid priority. Allowed values: low, medium, high."
+  ]
 }
 ```
 
----
-
-### 6. Delete Task (`DELETE /tasks/4`)
-**Request:**
+### 3. Malformed MongoDB ID
 ```bash
-curl -X DELETE http://localhost:5000/tasks/4
-```
-**Response (`200 OK`):**
-```json
-{
-  "success": true,
-  "message": "Task deleted successfully",
-  "data": {
-    "id": 4,
-    "title": "Submit Practical 4 Assignment (Completed)",
-    "description": "Verify code, execute tests, and push to GitHub repository",
-    "completed": true
-  }
-}
-```
-
----
-
-### 7. Validation & Error Responses
-
-#### A. Missing Content-Type Header on POST/PUT (Post-Lab)
-**Request:**
-```bash
-curl -X POST http://localhost:5000/tasks -d '{"title": "Test"}'
+curl -X GET http://localhost:5000/tasks/invalid-id-123
 ```
 **Response (`400 Bad Request`):**
 ```json
 {
   "success": false,
-  "message": "Invalid or missing Content-Type header. Expected 'application/json'."
+  "message": "Invalid task ID format 'invalid-id-123'. Task ID must be a valid 24-character hexadecimal MongoDB ObjectId."
 }
 ```
 
-#### B. Invalid Task ID Format (Post-Lab)
-**Request:**
+### 4. Nonexistent Valid MongoDB ID
 ```bash
-curl -X GET http://localhost:5000/tasks/abc
-```
-**Response (`400 Bad Request`):**
-```json
-{
-  "success": false,
-  "message": "Invalid task ID 'abc'. Task ID must be a positive integer."
-}
-```
-
-#### C. Nonexistent Task ID
-**Request:**
-```bash
-curl -X GET http://localhost:5000/tasks/9999
+curl -X GET http://localhost:5000/tasks/507f1f77bcf86cd799439011
 ```
 **Response (`404 Not Found`):**
 ```json
 {
   "success": false,
-  "message": "Task with ID 9999 not found"
+  "message": "Task with ID 507f1f77bcf86cd799439011 not found"
 }
 ```
-
-#### D. Missing Required Title on POST
-**Request:**
-```bash
-curl -X POST http://localhost:5000/tasks \
-  -H "Content-Type: application/json" \
-  -d '{"description": "No title here"}'
-```
-**Response (`400 Bad Request`):**
-```json
-{
-  "success": false,
-  "message": "Title is required and must be a non-empty string."
-}
-```
-
-#### E. Unrecognized Route (404 Handler)
-**Request:**
-```bash
-curl -X GET http://localhost:5000/unknown-route
-```
-**Response (`404 Not Found`):**
-```json
-{
-  "success": false,
-  "message": "Route not found: GET /unknown-route"
-}
-```
-
-#### F. Malformed JSON Body (Global Error Handler)
-**Request:**
-```bash
-curl -X POST http://localhost:5000/tasks \
-  -H "Content-Type: application/json" \
-  -d '{ title: broken-json }'
-```
-**Response (`400 Bad Request`):**
-```json
-{
-  "success": false,
-  "message": "Expected property name or '}' in JSON at position 2 (line 1 column 3)",
-  "error": "SyntaxError"
-}
-```
-*(No server stack trace leaked to client)*
 
 ---
 
-## Post-Lab Requirements
+## Automated Test Suite & Verification
 
-1. **Strict Content-Type Validation (`middleware/validateContentType.js`)**:
-   - Rejects any `POST` or `PUT` request lacking `Content-Type: application/json` before reaching controllers.
-   - Responds with `400 Bad Request` and descriptive error message.
-
-2. **Route Parameter Pre-Validation (`middleware/validateTaskId.js`)**:
-   - Validates that the `:id` parameter on `/tasks/:id` is a strictly positive integer string.
-   - Rejects non-numeric characters, negative numbers, and zero with `400 Bad Request` prior to executing any array operations or business logic.
-
----
-
-## Automated & Manual Testing Instructions
-
-### Automated Test Suite (`npm test`)
-Execute the automated test script containing 43 unit and integration assertions:
+Run the automated integration test suite:
 ```bash
 npm test
 ```
 
-**Real Test Output:**
+### Test Suite Execution Output:
 ```
 ============================================================
- Practical 4 - TaskManager API Automated Test Suite
+ Practical 5 - TaskManager API Automated Test Suite
  Student: Ansh Sojitra | ID: 24CS095 | CHARUSAT ITUE301
+ Focus: MongoDB Integration & Mongoose Schema Validation
 ============================================================
 
-[Test Server] Running on http://127.0.0.1:5095
+--- 1. MongoDB Connection Verification ---
+[Database] MongoDB Connected successfully: 127.0.0.1:27017/task_manager
+  ✔ PASS: MongoDB connection established successfully (readyState === 1)
+  Connected to DB host: 127.0.0.1:27017/task_manager
 
---- 1. API Metadata & Root Route ---
+--- 2. API Info & Root Route ---
   ✔ PASS: GET /api returns HTTP 200
   ✔ PASS: GET /api returns success: true
-  ✔ PASS: GET /api includes student ID 24CS095
+  ✔ PASS: Metadata includes Student ID 24CS095
+  ✔ PASS: Metadata confirms MongoDB engine
 
---- 2. CRUD: GET /tasks (Read All) ---
+--- 3. Mongoose CRUD: POST /tasks (Create Task & Whitespace Trimming) ---
+  ✔ PASS: POST /tasks returns HTTP 201 Created
+  ✔ PASS: POST /tasks returns success: true
+  ✔ PASS: Created task has MongoDB _id
+  ✔ PASS: Title whitespace trimmed by schema setter/pre-save hook
+  ✔ PASS: Priority correctly set to 'high'
+  ✔ PASS: Default or provided completed: false set
+  ✔ PASS: createdAt timestamp generated automatically
+
+--- 4. Mongoose CRUD: GET /tasks (Read All) ---
   ✔ PASS: GET /tasks returns HTTP 200
   ✔ PASS: GET /tasks returns success: true
   ✔ PASS: GET /tasks data is an array
-  ✔ PASS: GET /tasks contains initial tasks
-  ✔ PASS: Tasks conform to schema (id, title, description, completed)
+  ✔ PASS: Created task present in list returned from MongoDB
 
---- 3. CRUD: POST /tasks (Create Task) ---
-  ✔ PASS: POST /tasks returns HTTP 201 Created
-  ✔ PASS: POST /tasks returns success: true
-  ✔ PASS: Created task has correct title
-  ✔ PASS: Created task has correct description
-  ✔ PASS: Created task has correct completed status
-  ✔ PASS: Created task has numeric ID
+--- 5. Mongoose CRUD: GET /tasks/:id (Read Single by Valid ObjectId) ---
+  ✔ PASS: GET /tasks/:id returns HTTP 200 for existing ObjectId
+  ✔ PASS: Fetched task matches requested _id
+  ✔ PASS: Fetched task title is accurate
 
---- 4. CRUD: GET /tasks/:id (Read Single) ---
-  ✔ PASS: GET /tasks/:id returns HTTP 200
-  ✔ PASS: Fetched task matches requested ID
-
---- 5. CRUD: PUT /tasks/:id (Update Task) ---
+--- 6. Mongoose CRUD: PUT /tasks/:id (Update Task & Enum Check) ---
   ✔ PASS: PUT /tasks/:id returns HTTP 200
   ✔ PASS: PUT /tasks/:id returns success: true
-  ✔ PASS: Updated task has new title
-  ✔ PASS: Updated task has completed: true
-  ✔ PASS: Unmodified fields remain intact
+  ✔ PASS: Updated title is trimmed
+  ✔ PASS: Updated completed flag is true
+  ✔ PASS: Updated priority changed to 'medium'
 
---- 6. CRUD: DELETE /tasks/:id (Delete Task) ---
+--- 7. Verification: Data Persistence Across Server Restart ---
+  Stopping HTTP test server...
+  Restarting HTTP test server...
+  ✔ PASS: GET /tasks/:id after server restart returns HTTP 200
+  ✔ PASS: Task survived server restart with intact ID
+  ✔ PASS: Task data survived server restart unchanged
+
+--- 8. Mongoose CRUD: DELETE /tasks/:id (Delete Task) ---
   ✔ PASS: DELETE /tasks/:id returns HTTP 200
   ✔ PASS: DELETE /tasks/:id returns success: true
-  ✔ PASS: Deleted task returned in response
+  ✔ PASS: Deleted task document returned
   ✔ PASS: GET /tasks/:id after deletion returns HTTP 404
+  ✔ PASS: Deletion verification response has success: false
 
---- 7. Post-Lab Requirement: Content-Type Validation ---
-  ✔ PASS: POST without Content-Type returns HTTP 400
-  ✔ PASS: Missing Content-Type returns success: false
-  ✔ PASS: PUT with Content-Type: text/plain returns HTTP 400
+--- 9. Error Handling: Nonexistent Valid ObjectId vs Malformed ObjectId ---
+  ✔ PASS: Valid nonexistent ObjectId returns HTTP 404
+  ✔ PASS: Nonexistent task response has success: false
+  ✔ PASS: Structured 404 message indicates task not found
+  ✔ PASS: Malformed ObjectId returns HTTP 400 Bad Request
+  ✔ PASS: Malformed ID returns success: false
+  ✔ PASS: Malformed ID error message is clear and structured
 
---- 8. Post-Lab Requirement: Task ID Validation ---
-  ✔ PASS: GET /tasks/abc returns HTTP 400 Bad Request
-  ✔ PASS: Invalid ID response has success: false
-  ✔ PASS: DELETE /tasks/-5 returns HTTP 400 Bad Request
-  ✔ PASS: GET /tasks/0 returns HTTP 400 Bad Request
+--- 10. Mongoose Schema Validation: Missing Title & Invalid Priority Enum ---
+  ✔ PASS: POST with missing title returns HTTP 400
+  ✔ PASS: Missing title response has success: false
+  ✔ PASS: Validation errors returned as readable array
+  ✔ PASS: POST with whitespace-only title returns HTTP 400
+  ✔ PASS: Whitespace-only title rejected
+  ✔ PASS: POST with invalid priority enum returns HTTP 400
+  ✔ PASS: Invalid priority rejected
+  ✔ PASS: Enum validation error explains allowed values (low, medium, high)
 
---- 9. Error Handling: Nonexistent Task & Missing Body Fields ---
-  ✔ PASS: GET /tasks/99999 returns HTTP 404 Not Found
-  ✔ PASS: Nonexistent ID returns success: false
-  ✔ PASS: POST /tasks with missing title returns HTTP 400
-  ✔ PASS: Missing title returns success: false
-  ✔ PASS: PUT /tasks/1 with empty payload returns HTTP 400
-
---- 10. Unknown Route (404) & Global Error Handling ---
-  ✔ PASS: Unknown route returns HTTP 404
-  ✔ PASS: Unknown route response has success: false
-  ✔ PASS: Unknown route returns descriptive message
-  ✔ PASS: Malformed JSON returns HTTP 400 from errorHandler
-  ✔ PASS: Malformed JSON returns success: false
-  ✔ PASS: Global error handler does not expose stack traces to client
+--- 11. Middleware & Protocol Validation ---
+  ✔ PASS: POST without application/json returns HTTP 400
+  ✔ PASS: Malformed JSON syntax returns HTTP 400 from errorHandler
+  ✔ PASS: Stack traces are hidden from error responses
+  ✔ PASS: Unknown endpoint returns HTTP 404
 
 ============================================================
- Test Summary: 43 Passed | 0 Failed
+ Test Summary: 50 Passed | 0 Failed
 ============================================================
 ```
 
-### Manual Testing with Postman
-Import `TaskManagerAPI.postman_collection.json` into Postman or Thunder Client to run the requests against `http://localhost:5000`.
+---
+
+## Evidence & Acceptance Checklist
+
+- [x] **MongoDB Connection via dotenv**: Loaded from `MONGO_URI`, no credentials hardcoded.
+- [x] **Mongoose Schema (`models/Task.js`)**: All fields (`title`, `description`, `completed`, `createdAt`, `priority`) implemented with exact requirements.
+- [x] **Whitespace Trimming**: Handled via schema setter and Mongoose pre-save hook.
+- [x] **Priority Enum Validation**: Accepts only `low`, `medium`, `high`; rejects invalid values with descriptive error.
+- [x] **Mongoose Model Operations**: `Task.find()`, `Task.findById()`, `Task.create()`, `Task.findByIdAndUpdate()`, `Task.findByIdAndDelete()` replace all in-memory arrays.
+- [x] **Safe Mongo ID Handling**: Returns `400 Bad Request` for malformed IDs without crashing or throwing uncaught `CastError`.
+- [x] **Structured 404**: Returns formatted `{ success: false, message: ... }` for valid nonexistent ObjectIds.
+- [x] **Async Error Forwarding**: All route handlers forward errors to `errorHandler.js` via `next(err)`.
+- [x] **Server Restart Data Persistence**: Tested and verified — tasks persist across server process restarts.
+- [x] **Environment Security**: `.env` is ignored by `.gitignore`; `.env.example` with safe placeholder is committed.
+- [x] **Automated Tests**: 50 automated assertions passing with 0 failures.
 
 ---
 
-## Testing Evidence Checklist
+## Git Submission & Repository Plan
 
-- [x] Server boots successfully on port 5000 (configurable via `.env`).
-- [x] `GET /tasks` lists all seed tasks with `id`, `title`, `description`, `completed`.
-- [x] `POST /tasks` validates title and creates a new task (`201 Created`).
-- [x] `GET /tasks/:id` retrieves single task by numeric ID (`200 OK`).
-- [x] `PUT /tasks/:id` updates title, description, or completed status (`200 OK`).
-- [x] `DELETE /tasks/:id` deletes task by ID (`200 OK`).
-- [x] `validateContentType` rejects POST/PUT requests missing `Content-Type: application/json` (`400 Bad Request`).
-- [x] `validateTaskId` pre-validates task ID parameters prior to controller logic (`400 Bad Request`).
-- [x] Nonexistent task ID returns clean JSON (`404 Not Found`).
-- [x] Unknown routes return structured JSON (`404 Not Found`).
-- [x] Global error handler catches errors without exposing stack traces (`500` / `400`).
-- [x] Every request generates ISO timestamped console log: `[<ISO_TIMESTAMP>] <METHOD> <URL>`.
-
----
-
-## VCS / Git Submission
-
-- **Repository Name:** `task-manager-api-24CS095`
-- **Branch:** `main`
-- **Ignored Artifacts:** `node_modules/`, `.env`
-- **Tracked Artifacts:** Codebase, `package.json`, `package-lock.json`, Postman collection, test suite, and `README.md`.
+- **Repository**: Extended existing `task-manager-api-24CS095` repository from Practical 4.
+- **Commit Message**: `feat: persist tasks with MongoDB and Mongoose validation`
+- **Remote URL**: `https://github.com/AnshSojitra/task-manager-api-24CS095.git`

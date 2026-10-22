@@ -1,180 +1,161 @@
 const express = require("express");
 const router = express.Router();
+const Task = require("../models/Task");
 const validateTaskId = require("../middleware/validateTaskId");
 
-// In-memory tasks database
-// Each task contains: id (number), title (string), description (string), completed (boolean)
-let tasks = [
-  {
-    id: 1,
-    title: "Learn Express.js",
-    description: "Study Express fundamentals, routing, and middleware architecture",
-    completed: false,
-  },
-  {
-    id: 2,
-    title: "Build RESTful API",
-    description: "Implement CRUD endpoints with proper HTTP status codes",
-    completed: true,
-  },
-  {
-    id: 3,
-    title: "Implement Custom Middleware",
-    description: "Add request logger, Content-Type validator, and task ID validator",
-    completed: false,
-  },
-];
-
-// Apply ID validation middleware to all routes containing :id parameter
+// Apply MongoDB ObjectId validation middleware to all routes containing :id parameter
 router.use("/:id", validateTaskId);
 
 /**
  * GET /tasks
- * Retrieve all tasks from memory.
+ * Retrieve all tasks from MongoDB, ordered newest first.
  * Status: 200 OK
  */
-router.get("/", (req, res) => {
-  res.status(200).json({
-    success: true,
-    count: tasks.length,
-    data: tasks,
-  });
+router.get("/", async (req, res, next) => {
+  try {
+    const tasks = await Task.find().sort({ createdAt: -1 });
+    res.status(200).json({
+      success: true,
+      count: tasks.length,
+      data: tasks,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 /**
  * GET /tasks/:id
- * Retrieve a single task by its numeric ID.
- * Status: 200 OK or 404 Not Found
+ * Retrieve a single task by its MongoDB ObjectId.
+ * Status: 200 OK, 400 Bad Request (malformed ID handled by middleware), or 404 Not Found (valid ID not in DB)
  */
-router.get("/:id", (req, res) => {
-  const task = tasks.find((t) => t.id === req.taskId);
+router.get("/:id", async (req, res, next) => {
+  try {
+    const task = await Task.findById(req.params.id);
 
-  if (!task) {
-    return res.status(404).json({
-      success: false,
-      message: `Task with ID ${req.taskId} not found`,
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        message: `Task with ID ${req.params.id} not found`,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      data: task,
     });
+  } catch (error) {
+    next(error);
   }
-
-  res.status(200).json({
-    success: true,
-    data: task,
-  });
 });
 
 /**
  * POST /tasks
- * Create a new task.
- * Requires: title (non-empty string)
- * Optional: description (string), completed (boolean)
- * Status: 201 Created or 400 Bad Request
+ * Create a new task document in MongoDB.
+ * Body: { title (required), description (optional), completed (optional), priority (optional: 'low'|'medium'|'high') }
+ * Status: 201 Created or 400 Bad Request (schema validation error forwarded to errorHandler)
  */
-router.post("/", (req, res) => {
-  const { title, description, completed } = req.body;
+router.post("/", async (req, res, next) => {
+  try {
+    const { title, description, completed, priority } = req.body;
 
-  // Validation: title is mandatory and must not be empty
-  if (!title || typeof title !== "string" || title.trim() === "") {
-    return res.status(400).json({
-      success: false,
-      message: "Title is required and must be a non-empty string.",
+    // Instantiate and save document to trigger Mongoose schema validation & pre-save hooks
+    const newTask = new Task({
+      title,
+      description,
+      completed,
+      priority,
     });
+
+    const savedTask = await newTask.save();
+
+    res.status(201).json({
+      success: true,
+      message: "Task created successfully",
+      data: savedTask,
+    });
+  } catch (error) {
+    next(error);
   }
-
-  // Generate incremental ID based on existing task IDs
-  const newId = tasks.length > 0 ? Math.max(...tasks.map((t) => t.id)) + 1 : 1;
-
-  const newTask = {
-    id: newId,
-    title: title.trim(),
-    description: typeof description === "string" ? description.trim() : "",
-    completed: Boolean(completed),
-  };
-
-  tasks.push(newTask);
-
-  res.status(201).json({
-    success: true,
-    message: "Task created successfully",
-    data: newTask,
-  });
 });
 
 /**
  * PUT /tasks/:id
- * Update an existing task by its numeric ID.
- * Accepts: title, description, completed
- * Status: 200 OK, 400 Bad Request, or 404 Not Found
+ * Update an existing task in MongoDB by its ObjectId.
+ * Body: { title?, description?, completed?, priority? }
+ * Status: 200 OK, 400 Bad Request (validation failure), or 404 Not Found
  */
-router.put("/:id", (req, res) => {
-  const task = tasks.find((t) => t.id === req.taskId);
+router.put("/:id", async (req, res, next) => {
+  try {
+    const { title, description, completed, priority } = req.body;
 
-  if (!task) {
-    return res.status(404).json({
-      success: false,
-      message: `Task with ID ${req.taskId} not found`,
-    });
-  }
-
-  const { title, description, completed } = req.body;
-
-  // Ensure at least one field is provided for update
-  if (title === undefined && description === undefined && completed === undefined) {
-    return res.status(400).json({
-      success: false,
-      message: "At least one field (title, description, or completed) must be provided to update.",
-    });
-  }
-
-  // Validate title if supplied
-  if (title !== undefined) {
-    if (typeof title !== "string" || title.trim() === "") {
+    // Ensure at least one field is provided for update
+    if (
+      title === undefined &&
+      description === undefined &&
+      completed === undefined &&
+      priority === undefined
+    ) {
       return res.status(400).json({
         success: false,
-        message: "Title must be a non-empty string.",
+        message: "At least one field (title, description, completed, or priority) must be provided to update.",
       });
     }
-    task.title = title.trim();
-  }
 
-  // Update description if supplied
-  if (description !== undefined) {
-    task.description = typeof description === "string" ? description.trim() : "";
-  }
+    const updatePayload = {};
+    if (title !== undefined) updatePayload.title = typeof title === "string" ? title.trim() : title;
+    if (description !== undefined) updatePayload.description = typeof description === "string" ? description.trim() : description;
+    if (completed !== undefined) updatePayload.completed = Boolean(completed);
+    if (priority !== undefined) updatePayload.priority = priority;
 
-  // Update completed status if supplied
-  if (completed !== undefined) {
-    task.completed = Boolean(completed);
-  }
+    // Update with runValidators: true to enforce Mongoose schema enum and required constraints
+    const updatedTask = await Task.findByIdAndUpdate(
+      req.params.id,
+      updatePayload,
+      { returnDocument: "after", runValidators: true, context: "query" }
+    );
 
-  res.status(200).json({
-    success: true,
-    message: "Task updated successfully",
-    data: task,
-  });
+    if (!updatedTask) {
+      return res.status(404).json({
+        success: false,
+        message: `Task with ID ${req.params.id} not found`,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Task updated successfully",
+      data: updatedTask,
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 /**
  * DELETE /tasks/:id
- * Remove a task from memory by its numeric ID.
+ * Delete a task from MongoDB by its ObjectId.
  * Status: 200 OK or 404 Not Found
  */
-router.delete("/:id", (req, res) => {
-  const taskIndex = tasks.findIndex((t) => t.id === req.taskId);
+router.delete("/:id", async (req, res, next) => {
+  try {
+    const deletedTask = await Task.findByIdAndDelete(req.params.id);
 
-  if (taskIndex === -1) {
-    return res.status(404).json({
-      success: false,
-      message: `Task with ID ${req.taskId} not found`,
+    if (!deletedTask) {
+      return res.status(404).json({
+        success: false,
+        message: `Task with ID ${req.params.id} not found`,
+      });
+    }
+
+    res.status(200).json({
+      success: true,
+      message: "Task deleted successfully",
+      data: deletedTask,
     });
+  } catch (error) {
+    next(error);
   }
-
-  const [deletedTask] = tasks.splice(taskIndex, 1);
-
-  res.status(200).json({
-    success: true,
-    message: "Task deleted successfully",
-    data: deletedTask,
-  });
 });
 
 module.exports = router;

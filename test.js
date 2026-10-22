@@ -1,13 +1,23 @@
 /**
  * Automated Test Suite for TaskManager REST API
- * Practical 4: CHARUSAT ITUE301 - Ansh Sojitra (24CS095)
+ * Practical 5: MongoDB Integration and Schema Design with Mongoose
+ * CHARUSAT ITUE301 - Academic Year 2026–27
+ * Student: Ansh Sojitra | Student ID: 24CS095
  *
- * Runs comprehensive automated tests covering all CRUD operations,
- * middleware validation, error handling, and post-lab requirements.
+ * Verifies:
+ * 1. MongoDB Connection & Error Reporting
+ * 2. CRUD Operations against MongoDB (List, Create, Read by ID, Update, Delete)
+ * 3. Schema Constraints & Title Whitespace Trimming (Setter & Pre-save Hook)
+ * 4. Priority Enum Validation (low, medium, high)
+ * 5. Malformed MongoDB ObjectId vs Nonexistent Valid ObjectId (400 vs 404)
+ * 6. Persistence across Server Restart / Database Reconnection
+ * 7. Content-Type enforcement & Global Error Handling (Hiding Stack Traces)
  */
 
-const http = require("http");
+require("dotenv").config();
+const mongoose = require("mongoose");
 const app = require("./app");
+const Task = require("./models/Task");
 
 const TEST_PORT = 5095;
 const BASE_URL = `http://127.0.0.1:${TEST_PORT}`;
@@ -28,194 +38,264 @@ function assert(condition, testName) {
 
 async function runTests() {
   console.log("============================================================");
-  console.log(" Practical 4 - TaskManager API Automated Test Suite");
+  console.log(" Practical 5 - TaskManager API Automated Test Suite");
   console.log(" Student: Ansh Sojitra | ID: 24CS095 | CHARUSAT ITUE301");
+  console.log(" Focus: MongoDB Integration & Mongoose Schema Validation");
   console.log("============================================================\n");
+
+  // Step 1: Connect to MongoDB
+  console.log("--- 1. MongoDB Connection Verification ---");
+  try {
+    await app.connectDB();
+    assert(mongoose.connection.readyState === 1, "MongoDB connection established successfully (readyState === 1)");
+    console.log(`  Connected to DB host: ${mongoose.connection.host}:${mongoose.connection.port}/${mongoose.connection.name}`);
+  } catch (err) {
+    assert(false, `MongoDB connection failed: ${err.message}`);
+    console.error("\nFATAL: MongoDB is required to run Practical 5 test suite.");
+    console.error("Please ensure MongoDB is running locally or check MONGO_URI in .env");
+    process.exit(1);
+  }
 
   // Start test server
   await new Promise((resolve) => {
     server = app.listen(TEST_PORT, () => {
-      console.log(`[Test Server] Running on ${BASE_URL}\n`);
+      console.log(`[Test Server] Listening on ${BASE_URL}\n`);
       resolve();
     });
   });
 
   try {
     // -------------------------------------------------------------------------
-    console.log("--- 1. API Metadata & Root Route ---");
+    console.log("--- 2. API Info & Root Route ---");
     // -------------------------------------------------------------------------
     const resRoot = await fetch(`${BASE_URL}/api`);
     const dataRoot = await resRoot.json();
     assert(resRoot.status === 200, "GET /api returns HTTP 200");
     assert(dataRoot.success === true, "GET /api returns success: true");
-    assert(dataRoot.student && dataRoot.student.studentId === "24CS095", "GET /api includes student ID 24CS095");
+    assert(dataRoot.student && dataRoot.student.studentId === "24CS095", "Metadata includes Student ID 24CS095");
+    assert(dataRoot.database && dataRoot.database.engine === "MongoDB", "Metadata confirms MongoDB engine");
 
     // -------------------------------------------------------------------------
-    console.log("\n--- 2. CRUD: GET /tasks (Read All) ---");
+    console.log("\n--- 3. Mongoose CRUD: POST /tasks (Create Task & Whitespace Trimming) ---");
     // -------------------------------------------------------------------------
-    const resGetAll = await fetch(`${BASE_URL}/tasks`);
-    const dataGetAll = await resGetAll.json();
-    assert(resGetAll.status === 200, "GET /tasks returns HTTP 200");
-    assert(dataGetAll.success === true, "GET /tasks returns success: true");
-    assert(Array.isArray(dataGetAll.data), "GET /tasks data is an array");
-    assert(dataGetAll.data.length >= 2, "GET /tasks contains initial tasks");
-    assert(
-      dataGetAll.data.every((t) => t.id && t.title && t.description !== undefined && typeof t.completed === "boolean"),
-      "Tasks conform to schema (id, title, description, completed)"
-    );
-
-    // -------------------------------------------------------------------------
-    console.log("\n--- 3. CRUD: POST /tasks (Create Task) ---");
-    // -------------------------------------------------------------------------
-    const newTaskPayload = {
-      title: "Write Lab Report",
-      description: "Document Practical 4 implementation and test results",
+    const untrimmedTitle = "   Implement Mongoose Models and Hooks   ";
+    const postPayload = {
+      title: untrimmedTitle,
+      description: "Define Mongoose schema with enum, default values, and pre-save hooks",
       completed: false,
+      priority: "high",
     };
+
     const resCreate = await fetch(`${BASE_URL}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(newTaskPayload),
+      body: JSON.stringify(postPayload),
     });
     const dataCreate = await resCreate.json();
+
     assert(resCreate.status === 201, "POST /tasks returns HTTP 201 Created");
     assert(dataCreate.success === true, "POST /tasks returns success: true");
-    assert(dataCreate.data && dataCreate.data.title === newTaskPayload.title, "Created task has correct title");
-    assert(dataCreate.data.description === newTaskPayload.description, "Created task has correct description");
-    assert(dataCreate.data.completed === false, "Created task has correct completed status");
-    const createdId = dataCreate.data ? dataCreate.data.id : null;
-    assert(typeof createdId === "number", "Created task has numeric ID");
+    assert(dataCreate.data && dataCreate.data._id, "Created task has MongoDB _id");
+    assert(dataCreate.data.title === "Implement Mongoose Models and Hooks", "Title whitespace trimmed by schema setter/pre-save hook");
+    assert(dataCreate.data.priority === "high", "Priority correctly set to 'high'");
+    assert(dataCreate.data.completed === false, "Default or provided completed: false set");
+    assert(Boolean(dataCreate.data.createdAt), "createdAt timestamp generated automatically");
+
+    const createdId = dataCreate.data._id;
 
     // -------------------------------------------------------------------------
-    console.log("\n--- 4. CRUD: GET /tasks/:id (Read Single) ---");
+    console.log("\n--- 4. Mongoose CRUD: GET /tasks (Read All) ---");
+    // -------------------------------------------------------------------------
+    const resGetAll = await fetch(`${BASE_URL}/tasks`);
+    const dataGetAll = await resGetAll.json();
+
+    assert(resGetAll.status === 200, "GET /tasks returns HTTP 200");
+    assert(dataGetAll.success === true, "GET /tasks returns success: true");
+    assert(Array.isArray(dataGetAll.data), "GET /tasks data is an array");
+    assert(dataGetAll.data.some((t) => t._id === createdId), "Created task present in list returned from MongoDB");
+
+    // -------------------------------------------------------------------------
+    console.log("\n--- 5. Mongoose CRUD: GET /tasks/:id (Read Single by Valid ObjectId) ---");
     // -------------------------------------------------------------------------
     const resGetSingle = await fetch(`${BASE_URL}/tasks/${createdId}`);
     const dataGetSingle = await resGetSingle.json();
-    assert(resGetSingle.status === 200, "GET /tasks/:id returns HTTP 200");
-    assert(dataGetSingle.data && dataGetSingle.data.id === createdId, "Fetched task matches requested ID");
+
+    assert(resGetSingle.status === 200, "GET /tasks/:id returns HTTP 200 for existing ObjectId");
+    assert(dataGetSingle.data && dataGetSingle.data._id === createdId, "Fetched task matches requested _id");
+    assert(dataGetSingle.data.title === "Implement Mongoose Models and Hooks", "Fetched task title is accurate");
 
     // -------------------------------------------------------------------------
-    console.log("\n--- 5. CRUD: PUT /tasks/:id (Update Task) ---");
+    console.log("\n--- 6. Mongoose CRUD: PUT /tasks/:id (Update Task & Enum Check) ---");
     // -------------------------------------------------------------------------
     const updatePayload = {
-      title: "Write Lab Report (Completed)",
+      title: "   Implement Mongoose Models and Hooks (Verified)   ",
       completed: true,
+      priority: "medium",
     };
+
     const resUpdate = await fetch(`${BASE_URL}/tasks/${createdId}`, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(updatePayload),
     });
     const dataUpdate = await resUpdate.json();
+
     assert(resUpdate.status === 200, "PUT /tasks/:id returns HTTP 200");
     assert(dataUpdate.success === true, "PUT /tasks/:id returns success: true");
-    assert(dataUpdate.data.title === updatePayload.title, "Updated task has new title");
-    assert(dataUpdate.data.completed === true, "Updated task has completed: true");
-    assert(dataUpdate.data.description === newTaskPayload.description, "Unmodified fields remain intact");
+    assert(dataUpdate.data.title === "Implement Mongoose Models and Hooks (Verified)", "Updated title is trimmed");
+    assert(dataUpdate.data.completed === true, "Updated completed flag is true");
+    assert(dataUpdate.data.priority === "medium", "Updated priority changed to 'medium'");
 
     // -------------------------------------------------------------------------
-    console.log("\n--- 6. CRUD: DELETE /tasks/:id (Delete Task) ---");
+    console.log("\n--- 7. Verification: Data Persistence Across Server Restart ---");
+    // -------------------------------------------------------------------------
+    // Create a special persistence checkpoint task
+    const persistPayload = {
+      title: "Persistence Checkpoint Task",
+      description: "Must survive server stop and restart",
+      priority: "low",
+    };
+    const resPersistCreate = await fetch(`${BASE_URL}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(persistPayload),
+    });
+    const dataPersistCreate = await resPersistCreate.json();
+    const persistTaskId = dataPersistCreate.data._id;
+
+    // Simulate Server Stop
+    console.log("  Stopping HTTP test server...");
+    if (server.closeAllConnections) server.closeAllConnections();
+    await new Promise((resolve) => server.close(resolve));
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    // Simulate Server Restart
+    console.log("  Restarting HTTP test server...");
+    await new Promise((resolve) => {
+      server = app.listen(TEST_PORT, resolve);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 300));
+
+    // Query task from new server instance
+    const resPersistCheck = await fetch(`${BASE_URL}/tasks/${persistTaskId}`, {
+      headers: { "Connection": "close" },
+    });
+    const dataPersistCheck = await resPersistCheck.json();
+    assert(resPersistCheck.status === 200, "GET /tasks/:id after server restart returns HTTP 200");
+    assert(dataPersistCheck.data && dataPersistCheck.data._id === persistTaskId, "Task survived server restart with intact ID");
+    assert(dataPersistCheck.data.title === persistPayload.title, "Task data survived server restart unchanged");
+
+    // Clean up persistence checkpoint task
+    await fetch(`${BASE_URL}/tasks/${persistTaskId}`, { method: "DELETE" });
+
+    // -------------------------------------------------------------------------
+    console.log("\n--- 8. Mongoose CRUD: DELETE /tasks/:id (Delete Task) ---");
     // -------------------------------------------------------------------------
     const resDelete = await fetch(`${BASE_URL}/tasks/${createdId}`, {
       method: "DELETE",
     });
     const dataDelete = await resDelete.json();
+
     assert(resDelete.status === 200, "DELETE /tasks/:id returns HTTP 200");
     assert(dataDelete.success === true, "DELETE /tasks/:id returns success: true");
-    assert(dataDelete.data.id === createdId, "Deleted task returned in response");
+    assert(dataDelete.data._id === createdId, "Deleted task document returned");
 
-    // Verify task is really deleted
+    // Verify task is deleted from MongoDB
     const resVerifyDeleted = await fetch(`${BASE_URL}/tasks/${createdId}`);
+    const dataVerifyDeleted = await resVerifyDeleted.json();
     assert(resVerifyDeleted.status === 404, "GET /tasks/:id after deletion returns HTTP 404");
+    assert(dataVerifyDeleted.success === false, "Deletion verification response has success: false");
 
     // -------------------------------------------------------------------------
-    console.log("\n--- 7. Post-Lab Requirement: Content-Type Validation ---");
+    console.log("\n--- 9. Error Handling: Nonexistent Valid ObjectId vs Malformed ObjectId ---");
     // -------------------------------------------------------------------------
-    // POST without Content-Type header
-    const resMissingCT = await fetch(`${BASE_URL}/tasks`, {
-      method: "POST",
-      body: JSON.stringify({ title: "No Header" }),
-    });
-    const dataMissingCT = await resMissingCT.json();
-    assert(resMissingCT.status === 400, "POST without Content-Type returns HTTP 400");
-    assert(dataMissingCT.success === false, "Missing Content-Type returns success: false");
+    // Valid 24-hex ObjectId that does not exist in the database
+    const nonExistentValidId = "507f1f77bcf86cd799439011";
+    const resNonExistent = await fetch(`${BASE_URL}/tasks/${nonExistentValidId}`);
+    const dataNonExistent = await resNonExistent.json();
+    assert(resNonExistent.status === 404, "Valid nonexistent ObjectId returns HTTP 404");
+    assert(dataNonExistent.success === false, "Nonexistent task response has success: false");
+    assert(dataNonExistent.message.includes("not found"), "Structured 404 message indicates task not found");
 
-    // PUT with wrong Content-Type
-    const resWrongCT = await fetch(`${BASE_URL}/tasks/1`, {
-      method: "PUT",
-      headers: { "Content-Type": "text/plain" },
-      body: "plain text",
-    });
-    assert(resWrongCT.status === 400, "PUT with Content-Type: text/plain returns HTTP 400");
-
-    // -------------------------------------------------------------------------
-    console.log("\n--- 8. Post-Lab Requirement: Task ID Validation ---");
-    // -------------------------------------------------------------------------
-    // Alphabetic ID: /tasks/abc
-    const resAlphaId = await fetch(`${BASE_URL}/tasks/abc`);
-    const dataAlphaId = await resAlphaId.json();
-    assert(resAlphaId.status === 400, "GET /tasks/abc returns HTTP 400 Bad Request");
-    assert(dataAlphaId.success === false, "Invalid ID response has success: false");
-
-    // Negative ID: /tasks/-5
-    const resNegId = await fetch(`${BASE_URL}/tasks/-5`, { method: "DELETE" });
-    assert(resNegId.status === 400, "DELETE /tasks/-5 returns HTTP 400 Bad Request");
-
-    // Zero ID: /tasks/0
-    const resZeroId = await fetch(`${BASE_URL}/tasks/0`);
-    assert(resZeroId.status === 400, "GET /tasks/0 returns HTTP 400 Bad Request");
+    // Malformed ID (e.g., '123' or 'not-a-mongo-id')
+    const malformedId = "invalid-task-id-123";
+    const resMalformed = await fetch(`${BASE_URL}/tasks/${malformedId}`);
+    const dataMalformed = await resMalformed.json();
+    assert(resMalformed.status === 400, "Malformed ObjectId returns HTTP 400 Bad Request");
+    assert(dataMalformed.success === false, "Malformed ID returns success: false");
+    assert(dataMalformed.message.includes("Invalid task ID format"), "Malformed ID error message is clear and structured");
 
     // -------------------------------------------------------------------------
-    console.log("\n--- 9. Error Handling: Nonexistent Task & Missing Body Fields ---");
+    console.log("\n--- 10. Mongoose Schema Validation: Missing Title & Invalid Priority Enum ---");
     // -------------------------------------------------------------------------
-    // Nonexistent task ID: /tasks/99999
-    const resNotFound = await fetch(`${BASE_URL}/tasks/99999`);
-    const dataNotFound = await resNotFound.json();
-    assert(resNotFound.status === 404, "GET /tasks/99999 returns HTTP 404 Not Found");
-    assert(dataNotFound.success === false, "Nonexistent ID returns success: false");
-
-    // POST missing title
-    const resNoTitle = await fetch(`${BASE_URL}/tasks`, {
+    // Missing Title
+    const resMissingTitle = await fetch(`${BASE_URL}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ description: "Missing title" }),
+      body: JSON.stringify({ description: "Missing title", priority: "low" }),
     });
-    const dataNoTitle = await resNoTitle.json();
-    assert(resNoTitle.status === 400, "POST /tasks with missing title returns HTTP 400");
-    assert(dataNoTitle.success === false, "Missing title returns success: false");
+    const dataMissingTitle = await resMissingTitle.json();
+    assert(resMissingTitle.status === 400, "POST with missing title returns HTTP 400");
+    assert(dataMissingTitle.success === false, "Missing title response has success: false");
+    assert(Array.isArray(dataMissingTitle.errors), "Validation errors returned as readable array");
 
-    // PUT with empty payload
-    const resEmptyPut = await fetch(`${BASE_URL}/tasks/1`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
-    });
-    assert(resEmptyPut.status === 400, "PUT /tasks/1 with empty payload returns HTTP 400");
-
-    // -------------------------------------------------------------------------
-    console.log("\n--- 10. Unknown Route (404) & Global Error Handling ---");
-    // -------------------------------------------------------------------------
-    const resUnknownRoute = await fetch(`${BASE_URL}/api/unknown/endpoint`);
-    const dataUnknownRoute = await resUnknownRoute.json();
-    assert(resUnknownRoute.status === 404, "Unknown route returns HTTP 404");
-    assert(dataUnknownRoute.success === false, "Unknown route response has success: false");
-    assert(dataUnknownRoute.message.includes("Route not found"), "Unknown route returns descriptive message");
-
-    // Malformed JSON payload to trigger JSON parsing error handled by global error handler
-    const resMalformedJson = await fetch(`${BASE_URL}/tasks`, {
+    // Whitespace-only title
+    const resWhitespaceTitle = await fetch(`${BASE_URL}/tasks`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: "{ title: broken-json }",
+      body: JSON.stringify({ title: "     ", priority: "low" }),
     });
-    const dataMalformedJson = await resMalformedJson.json();
-    assert(resMalformedJson.status === 400, "Malformed JSON returns HTTP 400 from errorHandler");
-    assert(dataMalformedJson.success === false, "Malformed JSON returns success: false");
-    assert(!("stack" in dataMalformedJson), "Global error handler does not expose stack traces to client");
+    const dataWhitespaceTitle = await resWhitespaceTitle.json();
+    assert(resWhitespaceTitle.status === 400, "POST with whitespace-only title returns HTTP 400");
+    assert(dataWhitespaceTitle.success === false, "Whitespace-only title rejected");
+
+    // Invalid Priority Enum (e.g., 'critical')
+    const resInvalidPriority = await fetch(`${BASE_URL}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "Valid Title", priority: "critical" }),
+    });
+    const dataInvalidPriority = await resInvalidPriority.json();
+    assert(resInvalidPriority.status === 400, "POST with invalid priority enum returns HTTP 400");
+    assert(dataInvalidPriority.success === false, "Invalid priority rejected");
+    assert(
+      dataInvalidPriority.errors.some((msg) => msg.includes("valid priority")),
+      "Enum validation error explains allowed values (low, medium, high)"
+    );
+
+    // -------------------------------------------------------------------------
+    console.log("\n--- 11. Middleware & Protocol Validation ---");
+    // -------------------------------------------------------------------------
+    // Missing Content-Type on POST
+    const resNoCT = await fetch(`${BASE_URL}/tasks`, {
+      method: "POST",
+      body: JSON.stringify({ title: "Missing Header" }),
+    });
+    assert(resNoCT.status === 400, "POST without application/json returns HTTP 400");
+
+    // Malformed JSON syntax
+    const resBrokenJson = await fetch(`${BASE_URL}/tasks`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{ title: broken-syntax-no-quotes }",
+    });
+    const dataBrokenJson = await resBrokenJson.json();
+    assert(resBrokenJson.status === 400, "Malformed JSON syntax returns HTTP 400 from errorHandler");
+    assert(!("stack" in dataBrokenJson), "Stack traces are hidden from error responses");
+
+    // Unknown endpoint
+    const resUnknown = await fetch(`${BASE_URL}/invalid/route`);
+    assert(resUnknown.status === 404, "Unknown endpoint returns HTTP 404");
   } catch (err) {
-    console.error("Test execution error:", err);
+    console.error("Test execution caught unexpected error:", err);
     failedCount++;
   } finally {
-    await new Promise((resolve) => server.close(resolve));
+    if (server) {
+      if (server.closeAllConnections) server.closeAllConnections();
+      await new Promise((resolve) => server.close(resolve));
+    }
+    await mongoose.connection.close();
+
     console.log("\n============================================================");
     console.log(` Test Summary: ${passedCount} Passed | ${failedCount} Failed`);
     console.log("============================================================\n");

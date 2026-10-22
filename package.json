@@ -1,7 +1,7 @@
 {
   "name": "task-manager-api-24cs095",
   "version": "1.0.0",
-  "description": "Practical 4: Building a RESTful API with Node.js and Express - CHARUSAT ITUE301",
+  "description": "Practical 5: MongoDB Integration and Schema Design with Mongoose - CHARUSAT ITUE301",
   "main": "app.js",
   "scripts": {
     "start": "node app.js",
@@ -13,6 +13,8 @@
     "rest-api",
     "nodejs",
     "crud",
+    "mongodb",
+    "mongoose",
     "middleware",
     "charusat"
   ],
@@ -20,7 +22,8 @@
   "license": "ISC",
   "dependencies": {
     "dotenv": "^18.0.8",
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "mongoose": "^9.11.3"
   },
   "devDependencies": {
     "docx": "^9.13.0"
