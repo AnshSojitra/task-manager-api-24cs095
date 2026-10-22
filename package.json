@@ -1,0 +1,25 @@
+{
+  "name": "task-manager-api-24cs095",
+  "version": "1.0.0",
+  "description": "Practical 4: Building a RESTful API with Node.js and Express - CHARUSAT ITUE301",
+  "main": "app.js",
+  "scripts": {
+    "start": "node app.js",
+    "dev": "node --watch app.js",
+    "test": "node test.js"
+  },
+  "keywords": [
+    "express",
+    "rest-api",
+    "nodejs",
+    "crud",
+    "middleware",
+    "charusat"
+  ],
+  "author": "Ansh Sojitra (24CS095)",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^18.0.8",
+    "express": "^5.2.1"
+  }
+}
